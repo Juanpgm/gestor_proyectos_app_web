@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import Header from '@/components/Header'
 import StatsCards from '@/components/StatsCards'
@@ -10,6 +10,8 @@ import MapComponent from '@/components/MapComponent'
 import ProjectsTable, { Project } from '@/components/ProjectsTable'
 import ProjectsUnitsTable, { ProjectUnit } from '@/components/ProjectsUnitsTable'
 import UnifiedFilters, { FilterState } from '@/components/UnifiedFilters'
+import { useDashboard, useDashboardFilters } from '@/context/DashboardContext'
+import { DataProvider, useDataContext } from '@/context/DataContext'
 import { 
   BarChart3, 
   Map as MapIcon, 
@@ -234,93 +236,49 @@ const mockProjectUnits: ProjectUnit[] = [
 ]
 
 export default function Dashboard() {
+  return (
+    <DataProvider>
+      <DashboardContent />
+    </DataProvider>
+  )
+}
+
+function DashboardContent() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview')
   
-  // Estado global para los filtros que se comparten entre todas las pestañas
-  const [globalFilters, setGlobalFilters] = useState<FilterState>({
-    search: '',
-    estado: 'all',
-    centroGestor: [],
-    comunas: [],
-    barrios: [],
-    corregimientos: [],
-    veredas: [],
-    fuentesFinanciamiento: [],
-    filtrosPersonalizados: [],
-    subfiltrosPersonalizados: [],
-    fechaInicio: '',
-    fechaFin: ''
-  })
+  // Usar el contexto global del dashboard
+  const { state, getFilteredCount, exportData } = useDashboard()
+  const { filters, updateFilters, activeFiltersCount } = useDashboardFilters()
 
-  // Lógica de filtrado para proyectos
-  const filteredProjects = useMemo(() => {
-    return mockProjects.filter(project => {
-      // Filtro por búsqueda de texto
-      if (globalFilters.search) {
-        const searchTerm = globalFilters.search.toLowerCase()
-        const searchFields = [
-          project.name,
-          project.bpin,
-          project.responsible,
-          project.comuna,
-          project.barrio,
-          project.corregimiento,
-          project.vereda
-        ].filter(Boolean).join(' ').toLowerCase()
-        
-        if (!searchFields.includes(searchTerm)) return false
-      }
+  // Conectar los filtros del dashboard con el DataContext
+  const { setFilters: setDataContextFilters } = useDataContext()
 
-      // Filtro por estado
-      if (globalFilters.estado !== 'all' && project.status !== globalFilters.estado) {
-        return false
-      }
-
-      // Filtro por centro gestor
-      if (globalFilters.centroGestor.length > 0 && project.responsible) {
-        if (!globalFilters.centroGestor.includes(project.responsible)) return false
-      }
-
-      // Filtro por comunas
-      if (globalFilters.comunas.length > 0 && project.comuna) {
-        if (!globalFilters.comunas.includes(project.comuna)) return false
-      }
-
-      // Filtro por barrios
-      if (globalFilters.barrios.length > 0 && project.barrio) {
-        if (!globalFilters.barrios.includes(project.barrio)) return false
-      }
-
-      // Filtro por corregimientos
-      if (globalFilters.corregimientos.length > 0 && project.corregimiento) {
-        if (!globalFilters.corregimientos.includes(project.corregimiento)) return false
-      }
-
-      // Filtro por veredas
-      if (globalFilters.veredas.length > 0 && project.vereda) {
-        if (!globalFilters.veredas.includes(project.vereda)) return false
-      }
-
-      // Filtro por fecha de inicio
-      if (globalFilters.fechaInicio) {
-        if (project.startDate < globalFilters.fechaInicio) return false
-      }
-
-      // Filtro por fecha de fin
-      if (globalFilters.fechaFin) {
-        if (project.endDate > globalFilters.fechaFin) return false
-      }
-
-      return true
-    })
-  }, [globalFilters])
+  // Sincronizar filtros entre DashboardContext y DataContext
+  useEffect(() => {
+    // Convertir filtros del dashboard al formato del DataContext
+    const dataContextFilters = {
+      search: filters.search || '',
+      bpin: '',
+      periodo: '',
+      periodos: filters.periodos || [],
+      centroGestor: filters.centroGestor || [],
+      comunas: filters.comunas || [],
+      barrios: filters.barrios || [],
+      corregimientos: filters.corregimientos || [],
+      veredas: filters.veredas || [],
+      fuentesFinanciamiento: filters.fuentesFinanciamiento || [],
+      estado: filters.estado === 'all' ? '' : filters.estado || ''
+    }
+    
+    setDataContextFilters(dataContextFilters)
+  }, [filters, setDataContextFilters])
 
   // Lógica de filtrado para unidades de proyecto
   const filteredProjectUnits = useMemo(() => {
     return mockProjectUnits.filter(unit => {
       // Filtro por búsqueda de texto
-      if (globalFilters.search) {
-        const searchTerm = globalFilters.search.toLowerCase()
+      if (filters.search) {
+        const searchTerm = filters.search.toLowerCase()
         const searchFields = [
           unit.name,
           unit.bpin,
@@ -336,48 +294,38 @@ export default function Dashboard() {
       }
 
       // Filtro por estado
-      if (globalFilters.estado !== 'all' && unit.status !== globalFilters.estado) {
+      if (filters.estado !== 'all' && unit.status !== filters.estado) {
         return false
       }
 
       // Filtro por centro gestor
-      if (globalFilters.centroGestor.length > 0 && unit.responsible) {
-        if (!globalFilters.centroGestor.includes(unit.responsible)) return false
+      if (filters.centroGestor.length > 0 && unit.responsible) {
+        if (!filters.centroGestor.includes(unit.responsible)) return false
       }
 
       // Filtro por comunas
-      if (globalFilters.comunas.length > 0 && unit.comuna) {
-        if (!globalFilters.comunas.includes(unit.comuna)) return false
+      if (filters.comunas.length > 0 && unit.comuna) {
+        if (!filters.comunas.includes(unit.comuna)) return false
       }
 
       // Filtro por barrios
-      if (globalFilters.barrios.length > 0 && unit.barrio) {
-        if (!globalFilters.barrios.includes(unit.barrio)) return false
+      if (filters.barrios.length > 0 && unit.barrio) {
+        if (!filters.barrios.includes(unit.barrio)) return false
       }
 
       // Filtro por corregimientos
-      if (globalFilters.corregimientos.length > 0 && unit.corregimiento) {
-        if (!globalFilters.corregimientos.includes(unit.corregimiento)) return false
+      if (filters.corregimientos.length > 0 && unit.corregimiento) {
+        if (!filters.corregimientos.includes(unit.corregimiento)) return false
       }
 
       // Filtro por veredas
-      if (globalFilters.veredas.length > 0 && unit.vereda) {
-        if (!globalFilters.veredas.includes(unit.vereda)) return false
-      }
-
-      // Filtro por fecha de inicio
-      if (globalFilters.fechaInicio) {
-        if (unit.startDate < globalFilters.fechaInicio) return false
-      }
-
-      // Filtro por fecha de fin
-      if (globalFilters.fechaFin) {
-        if (unit.endDate > globalFilters.fechaFin) return false
+      if (filters.veredas.length > 0 && unit.vereda) {
+        if (!filters.veredas.includes(unit.vereda)) return false
       }
 
       return true
     })
-  }, [globalFilters])
+  }, [filters])
 
   const tabs = [
     { id: 'overview' as const, label: 'Vista General', icon: BarChart3 },
@@ -411,7 +359,7 @@ export default function Dashboard() {
       case 'projects':
         return (
           <div className="space-y-8">
-            <ProjectsTable projects={mockProjects} filteredProjects={filteredProjects} />
+            <ProjectsTable />
           </div>
         )
 
@@ -460,10 +408,10 @@ export default function Dashboard() {
                   <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
                     <h3 className="font-medium text-gray-800 dark:text-white">Filtros Activos:</h3>
                     <ul className="text-sm text-gray-600 dark:text-gray-400 mt-2">
-                      <li>Búsqueda: {globalFilters.search || 'Sin filtro'}</li>
-                      <li>Estado: {globalFilters.estado === 'all' ? 'Todos' : globalFilters.estado}</li>
-                      <li>Comunas: {globalFilters.comunas.length > 0 ? globalFilters.comunas.join(', ') : 'Todas'}</li>
-                      <li>Barrios: {globalFilters.barrios.length > 0 ? globalFilters.barrios.join(', ') : 'Todos'}</li>
+                      <li>Búsqueda: {filters.search || 'Sin filtro'}</li>
+                      <li>Estado: {filters.estado === 'all' ? 'Todos' : filters.estado}</li>
+                      <li>Comunas: {filters.comunas.length > 0 ? filters.comunas.join(', ') : 'Todas'}</li>
+                      <li>Barrios: {filters.barrios.length > 0 ? filters.barrios.join(', ') : 'Todos'}</li>
                     </ul>
                   </div>
                   <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg">
@@ -496,10 +444,9 @@ export default function Dashboard() {
                   <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
                     <h3 className="font-medium text-gray-800 dark:text-white">Filtros Activos:</h3>
                     <ul className="text-sm text-gray-600 dark:text-gray-400 mt-2">
-                      <li>Búsqueda: {globalFilters.search || 'Sin filtro'}</li>
-                      <li>Estado: {globalFilters.estado === 'all' ? 'Todos' : globalFilters.estado}</li>
-                      <li>Fecha inicio: {globalFilters.fechaInicio || 'Sin fecha'}</li>
-                      <li>Fecha fin: {globalFilters.fechaFin || 'Sin fecha'}</li>
+                      <li>Búsqueda: {filters.search || 'Sin filtro'}</li>
+                      <li>Estado: {filters.estado === 'all' ? 'Todos' : filters.estado}</li>
+                      <li>Períodos: {filters.periodos?.length > 0 ? filters.periodos.join(', ') : 'Todos'}</li>
                     </ul>
                   </div>
                   <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg">
@@ -576,8 +523,8 @@ export default function Dashboard() {
           className="mb-8"
         >
           <UnifiedFilters 
-            filters={globalFilters}
-            onFiltersChange={setGlobalFilters}
+            filters={filters}
+            onFiltersChange={updateFilters}
           />
         </motion.div>
 

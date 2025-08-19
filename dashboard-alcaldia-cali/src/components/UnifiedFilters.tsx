@@ -3,6 +3,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { Search, Filter, MapPin, Calendar, ChevronDown, RefreshCw, X } from 'lucide-react'
+import { useCentroGestor } from '@/hooks/useCentroGestor'
+import { useFuentesFinanciamiento } from '@/hooks/useFuentesFinanciamiento'
+import { useComunasBarrios } from '@/hooks/useComunasBarrios'
+import { useMovimientosPresupuestales } from '@/hooks/useMovimientosPresupuestales'
+
 
 interface FilterState {
   search: string
@@ -15,14 +20,14 @@ interface FilterState {
   fuentesFinanciamiento: string[]
   filtrosPersonalizados: string[]
   subfiltrosPersonalizados: string[]
-  fechaInicio: string
-  fechaFin: string
+  periodos: string[]
 }
 
 interface FilterProps {
   filters: FilterState
   onFiltersChange: (filters: FilterState) => void
   className?: string
+  allProjects?: any[] // Para obtener nombres de proyectos para sugerencias
 }
 
 // Valores por defecto para evitar errores
@@ -37,22 +42,30 @@ const defaultFilters: FilterState = {
   fuentesFinanciamiento: [],
   filtrosPersonalizados: [],
   subfiltrosPersonalizados: [],
-  fechaInicio: '',
-  fechaFin: ''
+  periodos: []
 }
 
 export default function UnifiedFilters({ 
   filters = defaultFilters, 
   onFiltersChange, 
-  className = '' 
+  className = '',
+  allProjects = []
 }: FilterProps) {
   const [isExpanded, setIsExpanded] = useState(true)
+  const [showSearchSuggestions, setShowSearchSuggestions] = useState(false)
+  const [searchSuggestions, setSearchSuggestions] = useState<Array<{value: string, type: string, label: string}>>([])
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(-1)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const searchDropdownRef = useRef<HTMLDivElement>(null)
+  const suggestionsDropdownRef = useRef<HTMLDivElement>(null)
   const [openDropdowns, setOpenDropdowns] = useState({
+    estado: false,
     comunas_barrios: false,
     corregimientos_veredas: false,
     fuente_financiamiento: false,
     filtros_personalizados: false,
-    centro_gestor: false
+    centro_gestor: false,
+    periodos: false
   })
   const [comunasSearch, setComunasSearch] = useState('')
   const [barriosSearch, setBarriosSearch] = useState('')
@@ -61,7 +74,31 @@ export default function UnifiedFilters({
   const [fuenteFinanciamientoSearch, setFuenteFinanciamientoSearch] = useState('')
   const [filtrosPersonalizadosSearch, setFiltrosPersonalizadosSearch] = useState('')
   const [centroGestorSearch, setCentroGestorSearch] = useState('')
+  const [periodosSearch, setPeriodosSearch] = useState('')
   const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // Cargar opciones de centro gestor desde JSON
+  const { centrosGestores, loading: centrosLoading, error: centrosError } = useCentroGestor()
+  
+  // Cargar opciones de fuentes de financiamiento desde JSON
+  const { fuentesFinanciamiento, loading: fuentesLoading, error: fuentesError } = useFuentesFinanciamiento()
+
+  // Cargar opciones de comunas y barrios desde GeoJSON
+  const { 
+    comunasBarrios, 
+    loading: comunasLoading, 
+    error: comunasError,
+    getComunas,
+    getBarriosPorComunas
+  } = useComunasBarrios()
+
+  // Cargar períodos desde movimientos presupuestales
+  const { 
+    movimientos, 
+    loading: movimientosLoading, 
+    error: movimientosError,
+    getPeriodos
+  } = useMovimientosPresupuestales()
 
   // Asegurar que filters tenga todas las propiedades necesarias
   const safeFilters = {
@@ -71,27 +108,174 @@ export default function UnifiedFilters({
 
   // Cerrar dropdowns al hacer click fuera
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Element
+      
+      console.log('🖱️ Click detectado en:', target)
+      
+      // Verificar si el click está en algún dropdown (buscar por clases)
+      const isInDropdown = target.closest('[data-dropdown]') || 
+                          target.closest('.absolute.top-full') ||
+                          target.closest('button[aria-expanded]') ||
+                          target.matches('[data-dropdown] *')
+      
+      if (!isInDropdown) {
+        console.log('🖱️ Click fuera de todos los dropdowns, cerrando')
         setOpenDropdowns({
+          estado: false,
           comunas_barrios: false,
           corregimientos_veredas: false,
           fuente_financiamiento: false,
           filtros_personalizados: false,
-          centro_gestor: false
+          centro_gestor: false,
+          periodos: false
         })
+      } else {
+        console.log('🖱️ Click dentro de dropdown, manteniendo abierto')
+      }
+      
+      // Manejo independiente para sugerencias de búsqueda
+      const isInSearchInput = searchInputRef.current && searchInputRef.current.contains(target)
+      const isInSearchContainer = searchDropdownRef.current && searchDropdownRef.current.contains(target)
+      const isInSuggestions = suggestionsDropdownRef.current && suggestionsDropdownRef.current.contains(target)
+      
+      if (!isInSearchInput && !isInSearchContainer && !isInSuggestions) {
+        setShowSearchSuggestions(false)
+        setSelectedSuggestionIndex(-1)
       }
     }
 
     document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('touchstart', handleClickOutside)
+    
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('touchstart', handleClickOutside)
     }
   }, [])
 
+  // Generar sugerencias de búsqueda
+  useEffect(() => {
+    const searchTerm = safeFilters.search.trim().toLowerCase()
+    
+    if (searchTerm.length < 2) {
+      setSearchSuggestions([])
+      setShowSearchSuggestions(false)
+      return
+    }
+
+    const suggestions: Array<{value: string, type: string, label: string}> = []
+
+    // Agregar sugerencias de centros gestores
+    centrosGestores.forEach(centro => {
+      if (centro.toLowerCase().includes(searchTerm)) {
+        suggestions.push({
+          value: centro,
+          type: 'Centro Gestor',
+          label: centro
+        })
+      }
+    })
+
+    // Agregar sugerencias de comunas
+    getComunas().forEach(comuna => {
+      if (comuna.toLowerCase().includes(searchTerm)) {
+        suggestions.push({
+          value: comuna,
+          type: 'Comuna',
+          label: comuna
+        })
+      }
+    })
+
+    // Agregar sugerencias de barrios
+    comunasBarrios.flatMap(item => item.barrios).forEach(barrio => {
+      if (barrio.toLowerCase().includes(searchTerm)) {
+        suggestions.push({
+          value: barrio,
+          type: 'Barrio',
+          label: barrio
+        })
+      }
+    })
+
+    // Agregar sugerencias de fuentes de financiamiento
+    fuentesFinanciamiento.forEach(fuente => {
+      if (fuente.toLowerCase().includes(searchTerm)) {
+        suggestions.push({
+          value: fuente,
+          type: 'Fuente',
+          label: fuente
+        })
+      }
+    })
+
+    // Agregar sugerencias de períodos
+    getPeriodos().forEach(periodo => {
+      if (periodo.toLowerCase().includes(searchTerm)) {
+        suggestions.push({
+          value: periodo,
+          type: 'Período',
+          label: periodo
+        })
+      }
+    })
+
+    // Agregar sugerencias de nombres de proyectos (coincidencias parciales)
+    let projectSuggestionsCount = 0
+    const maxProjectSuggestions = 3 // Limitar a 3 proyectos para no saturar la lista
+    
+    allProjects.forEach(projectData => {
+      if (projectSuggestionsCount >= maxProjectSuggestions) return
+      
+      const nombreProyecto = projectData.proyecto?.nombre_proyecto || ''
+      const bpin = projectData.proyecto?.bpin?.toString() || ''
+      const centroGestor = projectData.proyecto?.nombre_centro_gestor || ''
+      
+      // Buscar por nombre de proyecto
+      if (nombreProyecto.toLowerCase().includes(searchTerm)) {
+        // Limitar la longitud del label para mejor visualización
+        const shortLabel = nombreProyecto.length > 60 
+          ? nombreProyecto.substring(0, 60) + '...' 
+          : nombreProyecto
+        
+        // Agregar contexto adicional al label
+        const contextLabel = `${shortLabel} (BPIN: ${bpin}) - ${centroGestor}`
+        
+        suggestions.push({
+          value: nombreProyecto,
+          type: 'Proyecto',
+          label: contextLabel.length > 100 
+            ? `${shortLabel} (BPIN: ${bpin})`
+            : contextLabel
+        })
+        projectSuggestionsCount++
+      }
+      
+      // Buscar por BPIN (solo si no se encontró por nombre)
+      else if (bpin.includes(searchTerm) && projectSuggestionsCount < maxProjectSuggestions) {
+        const shortLabel = nombreProyecto.length > 50 
+          ? nombreProyecto.substring(0, 50) + '...' 
+          : nombreProyecto
+        
+        suggestions.push({
+          value: bpin,
+          type: 'BPIN',
+          label: `BPIN ${bpin}: ${shortLabel}`
+        })
+        projectSuggestionsCount++
+      }
+    })
+
+    // Limitar a 10 sugerencias y mostrar
+    setSearchSuggestions(suggestions.slice(0, 10))
+    setShowSearchSuggestions(suggestions.length > 0)
+    setSelectedSuggestionIndex(-1) // Reset del índice seleccionado
+  }, [safeFilters.search, centrosGestores, getComunas, comunasBarrios, fuentesFinanciamiento, getPeriodos])
+
   // Datos para los filtros
   const estadosOptions = [
-    { value: 'all', label: 'Todos los estados' },
+    { value: 'all', label: 'Estado' },
     { value: 'En Ejecución', label: 'En Ejecución' },
     { value: 'Planificación', label: 'Planificación' },
     { value: 'Completado', label: 'Completado' },
@@ -99,53 +283,19 @@ export default function UnifiedFilters({
     { value: 'En Evaluación', label: 'En Evaluación' }
   ]
 
-  const centroGestorOptions = [
-    'Cultura, Recreación y Deporte',
-    'Desarrollo Territorial y Participación',
-    'Educación Municipal',
-    'Infraestructura y Valorización',
-    'Salud Pública Municipal',
-    'Bienestar Social',
-    'Gobierno y Gestión del Territorio',
-    'Hacienda Municipal'
-  ]
+  // Opciones de centro gestor cargadas dinámicamente desde JSON
+  const centroGestorOptions = centrosLoading ? 
+    ['Cargando...'] : 
+    centrosError ? 
+      ['Error al cargar'] : 
+      centrosGestores
 
-  // Datos reales extraídos de los archivos GeoJSON de Cali
-  const comunasOptions = [
-    'Comuna 1', 'Comuna 2', 'Comuna 3', 'Comuna 4', 'Comuna 5', 'Comuna 6',
-    'Comuna 7', 'Comuna 8', 'Comuna 9', 'Comuna 10', 'Comuna 11', 'Comuna 12',
-    'Comuna 13', 'Comuna 14', 'Comuna 15', 'Comuna 16', 'Comuna 17', 'Comuna 18',
-    'Comuna 19', 'Comuna 20', 'Comuna 21', 'Comuna 22'
-  ]
-
-  const barriosOptions = [
-    'Aguablanca', 'Alfonso López', 'Álvaro García Real', 'Antonio Nariño',
-    'Aranjuez', 'Ático', 'Belén', 'Bellavista', 'Bosques del Limonar',
-    'Bretaña', 'Brisas de los Alpes', 'Caldas', 'Camilo Torres',
-    'Campo Bello', 'Caney', 'Caney El Vergel', 'Capri', 'Caracolí',
-    'Centenario', 'Centro', 'Chapinero', 'Ciudad 2000', 'Ciudad Córdoba',
-    'Ciudad Jardín', 'Ciudad Los Alamos', 'Cristóbal Colón', 'Departamental',
-    'El Calvario', 'El Guabal', 'El Jordán', 'El Limonar', 'El Peñón',
-    'El Poblado', 'El Poblado II', 'El Refugio', 'El Retiro', 'El Rodeo',
-    'El Rosario', 'El Silencio', 'El Trébol', 'El Vallado', 'Flora Industrial',
-    'Granada', 'Guayaquil', 'Julio Rincón', 'La Base', 'La Buitrera',
-    'La Campiña', 'La Casona', 'La Esperanza', 'La Estrella', 'La Flora',
-    'La Fortaleza', 'La Libertad', 'La Linda', 'La Merced', 'La Portada',
-    'La Rivera', 'La Selva', 'Las Américas', 'Las Granjas', 'Las Palmas',
-    'León XIII', 'Los Andes', 'Los Chorros', 'Los Conquistadores',
-    'Los Libertadores', 'Los Naranjos', 'Los Parques', 'Los Pinos',
-    'Mariano Ramos', 'Marroquín', 'Meléndez', 'Metropolitano del Norte',
-    'Nueva Floresta', 'Nuevo Latir', 'Obrero', 'Omar Torrijos',
-    'Pance', 'Panamericano', 'Pasoancho', 'Peñón de los Muertos',
-    'Petecuy', 'Picaleña', 'Pizamos', 'Polvorines', 'Primitivo Iglesias',
-    'Pueblo Joven', 'Puerto Mallarino', 'República de Israel',
-    'Salomia', 'San Antonio', 'San Bosco', 'San Cayetano', 'San Fernando',
-    'San José', 'San Luis', 'San Nicolás', 'San Pascual', 'San Pedro',
-    'Santa Elena', 'Santa Mónica', 'Santa Rosa', 'Siloé', 'Sindical',
-    'Sucre', 'Terrón Colorado', 'Ulpiano Lloreda', 'Unión de Vivienda Popular',
-    'Universidad', 'Vallado', 'Versalles', 'Villa Colombia', 'Villa del Lago',
-    'Villa Luz', 'Villanueva'
-  ]
+  // Opciones de comunas cargadas dinámicamente desde GeoJSON
+  const comunasOptions = comunasLoading ? 
+    ['Cargando...'] : 
+    comunasError ? 
+      ['Error al cargar'] : 
+      getComunas()
 
   const corregimientosOptions = [
     'Andes', 'Buitrera', 'Cañaveralejo', 'Dapa', 'El Saladito',
@@ -177,35 +327,6 @@ export default function UnifiedFilters({
   ]
 
   // Construir mapeos dinámicos para asociar barrios a comunas y veredas a corregimientos.
-  // Simulamos una distribución realista para demostrar la funcionalidad
-  const comunaBarriosMap = useMemo(() => {
-    const map: Record<string, string[]> = {
-      'Comuna 1': ['Terrón Colorado', 'Aguablanca', 'El Calvario', 'Primitivo Iglesias'],
-      'Comuna 2': ['Obrero', 'San Nicolás', 'Sucre', 'Pizamos'],
-      'Comuna 3': ['San Cayetano', 'El Peñón', 'Navarro', 'Santa Rosa'],
-      'Comuna 4': ['Alfonso López', 'San Bosco', 'Floralia', 'Álvaro García Real'],
-      'Comuna 5': ['Camilo Torres', 'Las Palmas', 'Antonio Nariño', 'República de Israel'],
-      'Comuna 6': ['El Rodeo', 'San Luis', 'León XIII', 'Ulpiano Lloreda'],
-      'Comuna 7': ['Aguablanca', 'La Flora', 'El Rosario', 'Las Granjas'],
-      'Comuna 8': ['Petecuy', 'Villa del Lago', 'Los Chorros', 'Villanueva'],
-      'Comuna 9': ['Aranjuez', 'Versalles', 'Centenario', 'Granada'],
-      'Comuna 10': ['Bretaña', 'El Guabal', 'San Antonio', 'Sindical'],
-      'Comuna 11': ['Guayaquil', 'Santa Elena', 'Pueblo Joven', 'San Pascual'],
-      'Comuna 12': ['Doce de Octubre', 'Poblado Campestre', 'Los Libertadores'],
-      'Comuna 13': ['Siloé', 'Lleras Camargo', 'Belisario Caicedo'],
-      'Comuna 14': ['Polvorines', 'El Refugio', 'Los Alcázares'],
-      'Comuna 15': ['El Poblado', 'Los Farallones', 'Montebello'],
-      'Comuna 16': ['Valle Grande', 'Los Chorros', 'Ciudad Los Alamos'],
-      'Comuna 17': ['Ciudad Jardín', 'Bosques del Limonar', 'El Limonar'],
-      'Comuna 18': ['Meléndez', 'Ciudad Capri', 'Los Andes'],
-      'Comuna 19': ['El Ingenio', 'Pance', 'Los Farallones'],
-      'Comuna 20': ['Siloé', 'Los Chorros', 'Golondrinas'],
-      'Comuna 21': ['Ciudad Córdoba', 'Pízamos', 'Valle Grande'],
-      'Comuna 22': ['Montebello', 'Los Farallones', 'Pance']
-    }
-    return map
-  }, [])
-
   const corregimientoVeredasMap = useMemo(() => {
     const map: Record<string, string[]> = {
       'Andes': ['Alto Aguacatal', 'Bajo Aguacatal', 'Campo Alegre'],
@@ -231,39 +352,12 @@ export default function UnifiedFilters({
     return map
   }, [])
 
-  // Opciones de fuentes de financiamiento
-  const fuentesFinanciamientoOptions = [
-    'Recursos Propios',
-    'Sistema General de Participaciones - SGP',
-    'Sistema General de Regalías - SGR',
-    'Fondo Nacional de Regalías',
-    'Cooperación Internacional',
-    'Crédito Externo',
-    'Crédito Interno',
-    'Ministerio de Vivienda',
-    'Ministerio de Transporte',
-    'Ministerio de Educación',
-    'Ministerio de Salud',
-    'INVIAS',
-    'FINDETER',
-    'Banco Mundial',
-    'BID - Banco Interamericano de Desarrollo',
-    'CAF - Banco de Desarrollo de América Latina',
-    'Unión Europea',
-    'USAID',
-    'Agencia Francesa de Desarrollo',
-    'Cooperación Española',
-    'Cooperación Alemana GIZ',
-    'Recursos Propios del Departamento',
-    'Fondo de Desarrollo Regional',
-    'Sobretasa a la Gasolina',
-    'Estampilla Pro-Desarrollo',
-    'Valorización',
-    'Plus Valía',
-    'Otras Fuentes'
-  ]
-
-  // Opciones de filtros personalizados
+  // Opciones de fuentes de financiamiento cargadas dinámicamente desde JSON
+  const fuentesFinanciamientoOptions = fuentesLoading ?
+    ['Cargando...'] :
+    fuentesError ?
+      ['Error al cargar'] :
+      fuentesFinanciamiento  // Opciones de filtros personalizados
   // Opciones para filtros personalizados con estructura jerárquica (categorías principales)
   const filtrosPersonalizadosOptions = ['Invertir para crecer', 'Seguridad']
   
@@ -275,18 +369,6 @@ export default function UnifiedFilters({
     'Lucha contra el terrorismo',
     'Orden Vial'
   ]
-  const getBarriosForComunas = (selectedComunas: string[] | undefined) => {
-    if (!selectedComunas || selectedComunas.length === 0) return []
-    const set = new Set<string>()
-    selectedComunas.forEach(comuna => {
-      const barrios = comunaBarriosMap[comuna]
-      if (barrios) {
-        barrios.forEach(barrio => set.add(barrio))
-      }
-    })
-    return Array.from(set)
-  }
-
   const getVeredasForCorregimientos = (selectedCorregimientos: string[] | undefined) => {
     if (!selectedCorregimientos || selectedCorregimientos.length === 0) return []
     const set = new Set<string>()
@@ -323,11 +405,77 @@ export default function UnifiedFilters({
     }
   }
 
+  const handleSuggestionSelect = (suggestion: {value: string, type: string, label: string}) => {
+    console.log('Seleccionando sugerencia:', suggestion)
+    // Usar el valor de la sugerencia como término de búsqueda
+    updateFilters({ search: suggestion.value })
+    
+    // Cerrar las sugerencias inmediatamente
+    setShowSearchSuggestions(false)
+    setSelectedSuggestionIndex(-1)
+    
+    // Enfocar el input después de seleccionar
+    setTimeout(() => {
+      if (searchInputRef.current) {
+        searchInputRef.current.focus()
+      }
+    }, 100)
+  }
+
+  const handleSearchInputChange = (value: string) => {
+    updateFilters({ search: value })
+    setSelectedSuggestionIndex(-1)
+    
+    // Mostrar sugerencias si hay texto
+    if (value.trim().length >= 2) {
+      setShowSearchSuggestions(true)
+    } else {
+      setShowSearchSuggestions(false)
+    }
+  }
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+    if (!showSearchSuggestions || searchSuggestions.length === 0) return
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        setSelectedSuggestionIndex(prev => 
+          prev < searchSuggestions.length - 1 ? prev + 1 : 0
+        )
+        break
+      case 'ArrowUp':
+        e.preventDefault()
+        setSelectedSuggestionIndex(prev => 
+          prev > 0 ? prev - 1 : searchSuggestions.length - 1
+        )
+        break
+      case 'Enter':
+        e.preventDefault()
+        if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < searchSuggestions.length) {
+          handleSuggestionSelect(searchSuggestions[selectedSuggestionIndex])
+        }
+        break
+      case 'Escape':
+        setShowSearchSuggestions(false)
+        setSelectedSuggestionIndex(-1)
+        break
+    }
+  }
+
   const resetFilters = () => {
     if (onFiltersChange) {
-  onFiltersChange(defaultFilters)
-  // cerrar dropdowns al limpiar
-  setOpenDropdowns({ comunas_barrios: false, corregimientos_veredas: false, fuente_financiamiento: false, filtros_personalizados: false, centro_gestor: false })
+      onFiltersChange(defaultFilters)
+      // cerrar dropdowns al limpiar
+      setOpenDropdowns({ estado: false, comunas_barrios: false, corregimientos_veredas: false, fuente_financiamiento: false, filtros_personalizados: false, centro_gestor: false, periodos: false })
+      // limpiar valores de búsqueda
+      setComunasSearch('')
+      setBarriosSearch('')
+      setCorregimientosSearch('')
+      setVeredasSearch('')
+      setFuenteFinanciamientoSearch('')
+      setFiltrosPersonalizadosSearch('')
+      setCentroGestorSearch('')
     }
   }
 
@@ -343,8 +491,7 @@ export default function UnifiedFilters({
     if (safeFilters.fuentesFinanciamiento && safeFilters.fuentesFinanciamiento.length > 0) count++
     if (safeFilters.filtrosPersonalizados && safeFilters.filtrosPersonalizados.length > 0) count++
     if (safeFilters.subfiltrosPersonalizados && safeFilters.subfiltrosPersonalizados.length > 0) count++
-    if (safeFilters.fechaInicio) count++
-    if (safeFilters.fechaFin) count++
+    if (safeFilters.periodos && safeFilters.periodos.length > 0) count++
     return count
   }
 
@@ -363,11 +510,12 @@ export default function UnifiedFilters({
           updateFilters({ centroGestor: [] })
         }
         break
-      case 'fechaInicio':
-        updateFilters({ fechaInicio: '' })
-        break
-      case 'fechaFin':
-        updateFilters({ fechaFin: '' })
+      case 'periodos':
+        if (value) {
+          updateFilters({ periodos: safeFilters.periodos.filter(p => p !== value) })
+        } else {
+          updateFilters({ periodos: [] })
+        }
         break
       case 'comunas':
         if (value) {
@@ -375,7 +523,7 @@ export default function UnifiedFilters({
           if (updatedComunas.length === 0) {
             updateFilters({ comunas: [], barrios: [] })
           } else {
-            const allowedBarrios = new Set(getBarriosForComunas(updatedComunas))
+            const allowedBarrios = new Set(getBarriosPorComunas(updatedComunas))
             const filteredBarrios = (safeFilters.barrios || []).filter(b => allowedBarrios.has(b))
             updateFilters({ comunas: updatedComunas, barrios: filteredBarrios })
           }
@@ -454,11 +602,17 @@ export default function UnifiedFilters({
     }
   }
 
-  const toggleDropdown = (type: 'comunas_barrios' | 'corregimientos_veredas' | 'fuente_financiamiento' | 'filtros_personalizados' | 'centro_gestor') => {
-    setOpenDropdowns(prev => ({
-      ...prev,
-      [type]: !prev[type]
-    }))
+  const toggleDropdown = (type: 'estado' | 'comunas_barrios' | 'corregimientos_veredas' | 'fuente_financiamiento' | 'filtros_personalizados' | 'centro_gestor' | 'periodos') => {
+    console.log(`🎯 toggleDropdown llamado para: ${type}`)
+    setOpenDropdowns(prev => {
+      const newValue = !prev[type]
+      console.log(`🔄 Toggle dropdown ${type}:`, prev[type] ? 'cerrar' : 'abrir', '→', newValue ? 'abrir' : 'cerrar')
+      
+      return {
+        ...prev,
+        [type]: newValue
+      }
+    })
   }
 
   // Funciones para manejar las dependencias jerárquicas
@@ -485,7 +639,7 @@ export default function UnifiedFilters({
       const updatedComunas = currentComunas.filter(c => c !== comuna)
       
       // Filtrar barrios que ya no son válidos
-      const validBarrios = getBarriosForComunas(updatedComunas)
+      const validBarrios = getBarriosPorComunas(updatedComunas)
       const filteredBarrios = currentBarrios.filter(b => validBarrios.includes(b))
       
       updateFilters({ 
@@ -562,19 +716,30 @@ export default function UnifiedFilters({
   }
 
   // Listas a mostrar filtradas según las selecciones padre
-  const displayedBarrios = getBarriosForComunas(safeFilters.comunas)
+  const displayedBarrios = useMemo(() => {
+    // Si hay comunas seleccionadas, mostrar solo barrios de esas comunas
+    if (safeFilters.comunas && safeFilters.comunas.length > 0) {
+      return getBarriosPorComunas(safeFilters.comunas)
+    }
+    // Si no hay comunas seleccionadas, mostrar todos los barrios disponibles
+    return comunasBarrios.flatMap(item => item.barrios)
+  }, [safeFilters.comunas, getBarriosPorComunas, comunasBarrios])
+  
   const displayedVeredas = getVeredasForCorregimientos(safeFilters.corregimientos)
   const displayedSubfiltros = getSubfiltrosForFiltros(safeFilters.filtrosPersonalizados)
 
   // Apply search filtering for dropdown lists
-  const filteredComunas = comunasOptions.filter(c => c.toLowerCase().includes(comunasSearch.toLowerCase()))
-  const filteredBarrios = displayedBarrios.filter(b => b.toLowerCase().includes(barriosSearch.toLowerCase()))
-  const filteredCorregimientos = corregimientosOptions.filter(c => c.toLowerCase().includes(corregimientosSearch.toLowerCase()))
-  const filteredVeredas = displayedVeredas.filter(v => v.toLowerCase().includes(veredasSearch.toLowerCase()))
-  const filteredFuentesFinanciamiento = fuentesFinanciamientoOptions.filter(f => f.toLowerCase().includes(fuenteFinanciamientoSearch.toLowerCase()))
-  const filteredFiltrosPersonalizados = filtrosPersonalizadosOptions.filter(f => f.toLowerCase().includes(filtrosPersonalizadosSearch.toLowerCase()))
-  const filteredSubfiltrosPersonalizados = displayedSubfiltros.filter(s => s.toLowerCase().includes(filtrosPersonalizadosSearch.toLowerCase()))
-  const filteredCentroGestor = centroGestorOptions.filter(c => c.toLowerCase().includes(centroGestorSearch.toLowerCase()))
+  const filteredComunas = useMemo(() => {
+    return comunasOptions.filter((c: string) => c.toLowerCase().includes(comunasSearch.toLowerCase()))
+  }, [comunasOptions, comunasSearch])
+  
+  const filteredBarrios = displayedBarrios.filter((b: string) => b.toLowerCase().includes(barriosSearch.toLowerCase()))
+  const filteredCorregimientos = corregimientosOptions.filter((c: string) => c.toLowerCase().includes(corregimientosSearch.toLowerCase()))
+  const filteredVeredas = displayedVeredas.filter((v: string) => v.toLowerCase().includes(veredasSearch.toLowerCase()))
+  const filteredFuentesFinanciamiento = fuentesFinanciamientoOptions.filter((f: string) => f.toLowerCase().includes(fuenteFinanciamientoSearch.toLowerCase()))
+  const filteredFiltrosPersonalizados = filtrosPersonalizadosOptions.filter((f: string) => f.toLowerCase().includes(filtrosPersonalizadosSearch.toLowerCase()))
+  const filteredSubfiltrosPersonalizados = displayedSubfiltros.filter((s: string) => s.toLowerCase().includes(filtrosPersonalizadosSearch.toLowerCase()))
+  const filteredCentroGestor = centroGestorOptions.filter((c: string) => c.toLowerCase().includes(centroGestorSearch.toLowerCase()))
 
   return (
     <div className={`bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 transition-colors duration-300 ${className}`}>
@@ -592,6 +757,22 @@ export default function UnifiedFilters({
           </div>
 
           <div className="flex items-center space-x-2">
+            <button
+              onClick={() => {
+                console.log('🔍 Estado completo de filtros:')
+                console.log('- Comunas cargadas:', comunasOptions.length)
+                console.log('- Fuentes cargadas:', fuentesFinanciamiento.length)
+                console.log('- Comunas loading:', comunasLoading)
+                console.log('- Fuentes loading:', fuentesLoading)
+                console.log('- Datos comunas completos:', comunasBarrios)
+                console.log('- Datos fuentes completos:', fuentesFinanciamiento)
+                console.log('- Filtros actuales:', safeFilters)
+              }}
+              className="px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-md hover:bg-blue-200 dark:hover:bg-blue-800/50 transition-colors"
+              title="Mostrar información de debug en consola (F12)"
+            >
+              🔍 Debug
+            </button>
             <button
               onClick={resetFilters}
               className="flex items-center space-x-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors duration-200"
@@ -620,23 +801,83 @@ export default function UnifiedFilters({
       >
         <div className="p-4 space-y-4 overflow-visible">
           {/* Barra de Búsqueda Global */}
-          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-700 rounded-xl p-4">
+          <div className="bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-xl p-4 relative">
             <div className="flex items-center space-x-3">
               <div className="flex-shrink-0">
-                <Search className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                <Search className="w-5 h-5 text-gray-600 dark:text-gray-400" />
               </div>
-              <div className="flex-1">
+              <div className="flex-1 relative" ref={searchDropdownRef}>
                 <input
+                  ref={searchInputRef}
                   type="text"
                   value={safeFilters.search}
-                  onChange={(e) => updateFilters({ search: e.target.value })}
-                  placeholder="Buscar por BPIN, nombre del proyecto, unidad de proyecto, responsable, barrio, comuna..."
+                  onChange={(e) => handleSearchInputChange(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  onFocus={() => {
+                    if (safeFilters.search.trim().length >= 2 && searchSuggestions.length > 0) {
+                      setShowSearchSuggestions(true)
+                    }
+                  }}
+                  onBlur={() => {
+                    // El click-outside unificado se encarga de cerrar
+                  }}
+                  placeholder="Buscar por BPIN, nombre del proyecto, unidad de proyecto, responsable, centro gestor, barrio, comuna..."
                   className="w-full border-0 bg-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-0 text-sm"
                 />
+                
+                {/* Dropdown de sugerencias */}
+                {showSearchSuggestions && searchSuggestions.length > 0 && (
+                  <div ref={suggestionsDropdownRef} className="absolute top-full left-0 right-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-2xl z-[99999] max-h-64 overflow-y-auto ring-1 ring-black ring-opacity-5 backdrop-blur-sm">
+                    <div className="p-2">
+                      <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 px-2 py-1 uppercase tracking-wide">
+                        Pre-filtros sugeridos
+                      </div>
+                      {searchSuggestions.map((suggestion, index) => (
+                        <button
+                          key={`${suggestion.type}-${suggestion.value}-${index}`}
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            handleSuggestionSelect(suggestion)
+                          }}
+                          className={`w-full text-left px-3 py-2 rounded-md transition-colors duration-200 flex items-center gap-2 group ${
+                            selectedSuggestionIndex === index 
+                              ? 'bg-blue-100 dark:bg-blue-900/30' 
+                              : 'hover:bg-blue-50 dark:hover:bg-blue-900/20'
+                          }`}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                              {suggestion.label}
+                            </div>
+                          </div>
+                          <div className="flex-shrink-0">
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                              suggestion.type === 'Centro Gestor' ? 'bg-teal-100 text-teal-800 dark:bg-teal-900/20 dark:text-teal-300' :
+                              suggestion.type === 'Comuna' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-300' :
+                              suggestion.type === 'Barrio' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300' :
+                              suggestion.type === 'Fuente' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-300' :
+                              suggestion.type === 'Período' ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-300' :
+                              suggestion.type === 'Proyecto' ? 'bg-pink-100 text-pink-800 dark:bg-pink-900/20 dark:text-pink-300' :
+                              suggestion.type === 'BPIN' ? 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/20 dark:text-cyan-300' :
+                              'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
+                            }`}>
+                              {suggestion.type}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               {safeFilters.search && (
                 <button
-                  onClick={() => updateFilters({ search: '' })}
+                  onClick={() => {
+                    updateFilters({ search: '' })
+                    setShowSearchSuggestions(false)
+                    setSelectedSuggestionIndex(-1)
+                  }}
                   className="flex-shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-200"
                   aria-label="Limpiar búsqueda"
                 >
@@ -651,56 +892,30 @@ export default function UnifiedFilters({
             )}
           </div>
 
-          {/* Estado y Fechas */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="flex items-center space-x-2">
-              <Filter className="w-4 h-4 text-gray-400" />
-              <select
-                className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent flex-1"
-                value={safeFilters.estado}
-                onChange={(e) => updateFilters({ estado: e.target.value })}
-              >
-                {estadosOptions.map(option => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <Calendar className="w-4 h-4 text-gray-400" />
-              <input
-                type="date"
-                className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent flex-1"
-                value={safeFilters.fechaInicio}
-                onChange={(e) => updateFilters({ fechaInicio: e.target.value })}
-              />
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <Calendar className="w-4 h-4 text-gray-400" />
-              <input
-                type="date"
-                className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent flex-1"
-                value={safeFilters.fechaFin}
-                onChange={(e) => updateFilters({ fechaFin: e.target.value })}
-              />
-            </div>
-          </div>
-
-          {/* Geographical filters */}
-          <div ref={dropdownRef} className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-5 gap-3 relative">
-            {/* Centro Gestor */}
-            <div className="relative">
+          {/* Centro Gestor y Período */}
+          <div className="flex gap-3">
+            {/* Centro Gestor - Ahora usa la estética blanca como Período */}
+            <div className="relative flex-[7]" data-dropdown="centro_gestor">
               <button
-                onClick={() => toggleDropdown('centro_gestor')}
-                className="flex items-center justify-between w-full p-2 bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-700 rounded-lg cursor-pointer hover:bg-teal-100 dark:hover:bg-teal-800/30 transition-colors duration-200"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  console.log('🎯 Botón Centro Gestor clickeado')
+                  toggleDropdown('centro_gestor')
+                }}
+                className="flex items-center justify-between w-full px-3 py-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors duration-200"
+                aria-expanded={openDropdowns.centro_gestor}
               >
-                <span className="text-xs font-medium text-teal-700 dark:text-teal-300">Centro Gestor</span>
-                <ChevronDown className={`w-3 h-3 text-teal-600 transition-transform duration-200 ${openDropdowns.centro_gestor ? 'rotate-180' : ''}`} />
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
+                  Centro Gestor {safeFilters.centroGestor?.length > 0 && `(${safeFilters.centroGestor.length})`}
+                </span>
+                <ChevronDown className={`w-4 h-4 text-gray-600 dark:text-gray-400 transition-transform duration-200 ml-2 flex-shrink-0 ${openDropdowns.centro_gestor ? 'rotate-180' : ''}`} />
               </button>
 
               {openDropdowns.centro_gestor && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-xl z-[9999] max-h-80 overflow-y-auto">
+                <div 
+                  className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-xl z-[9999] max-h-80 overflow-y-auto"
+                >
                   <div className="p-3">
                     <div className="mb-2">
                       <input
@@ -713,12 +928,17 @@ export default function UnifiedFilters({
                     </div>
                     <div className="space-y-1 max-h-60 overflow-y-auto">
                       {filteredCentroGestor.map(centro => (
-                        <label key={centro} className="flex items-center space-x-2 p-1 hover:bg-teal-50 dark:hover:bg-teal-900/20 rounded cursor-pointer">
+                        <label 
+                          key={centro} 
+                          className="flex items-center space-x-2 p-1 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer"
+                        >
                           <input
                             type="checkbox"
-                            className="w-4 h-4 text-teal-600 border-gray-300 rounded focus:ring-teal-500"
+                            className="w-4 h-4 text-gray-600 border-gray-300 rounded focus:ring-gray-500"
                             checked={safeFilters.centroGestor?.includes(centro) || false}
-                            onChange={(e) => handleCentroGestorChange(centro, e.target.checked)}
+                            onChange={(e) => {
+                              handleCentroGestorChange(centro, e.target.checked)
+                            }}
                           />
                           <span className="text-sm text-gray-700 dark:text-gray-300">{centro}</span>
                         </label>
@@ -734,43 +954,155 @@ export default function UnifiedFilters({
               )}
             </div>
 
-            {/* Fuente de Financiamiento */}
-            <div className="relative">
+            {/* Período - Mantiene estética blanca */}
+            <div className="relative flex-[3]" data-dropdown="periodos">
               <button
-                onClick={() => toggleDropdown('fuente_financiamiento')}
-                className="flex items-center justify-between w-full p-2 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded-lg cursor-pointer hover:bg-purple-100 dark:hover:bg-purple-800/30 transition-colors duration-200"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  console.log('🎯 Botón Período clickeado')
+                  toggleDropdown('periodos')
+                }}
+                className="flex items-center justify-between w-full px-3 py-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors duration-200"
+                aria-expanded={openDropdowns.periodos}
               >
-                <span className="text-xs font-medium text-purple-700 dark:text-purple-300">Fuente de Financiamiento</span>
-                <ChevronDown className={`w-3 h-3 text-purple-600 transition-transform duration-200 ${openDropdowns.fuente_financiamiento ? 'rotate-180' : ''}`} />
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
+                  Período {safeFilters.periodos?.length > 0 && `(${safeFilters.periodos.length})`}
+                </span>
+                <ChevronDown className={`w-4 h-4 text-gray-600 dark:text-gray-400 transition-transform duration-200 ml-2 flex-shrink-0 ${openDropdowns.periodos ? 'rotate-180' : ''}`} />
               </button>
 
-              {openDropdowns.fuente_financiamiento && (
+              {openDropdowns.periodos && (
                 <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-xl z-[9999] max-h-80 overflow-y-auto">
                   <div className="p-3">
                     <div className="mb-2">
                       <input
                         type="text"
-                        value={fuenteFinanciamientoSearch}
-                        onChange={(e) => setFuenteFinanciamientoSearch(e.target.value)}
-                        placeholder="Buscar fuente..."
+                        value={periodosSearch}
+                        onChange={(e) => setPeriodosSearch(e.target.value)}
+                        placeholder="Buscar período..."
                         className="w-full px-2 py-1 border border-gray-200 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                       />
                     </div>
                     <div className="space-y-1 max-h-60 overflow-y-auto">
-                      {filteredFuentesFinanciamiento.map(fuente => (
+                      {getPeriodos()
+                        .filter(periodo => 
+                          periodo.toLowerCase().includes(periodosSearch.toLowerCase())
+                        )
+                        .map(periodo => (
+                        <label key={periodo} className="flex items-center space-x-2 p-1 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 text-gray-600 border-gray-300 rounded focus:ring-gray-500"
+                            checked={safeFilters.periodos?.includes(periodo) || false}
+                            onChange={(e) => {
+                              const currentPeriodos = safeFilters.periodos || []
+                              if (e.target.checked) {
+                                updateFilters({ periodos: [...currentPeriodos, periodo] })
+                              } else {
+                                updateFilters({ periodos: currentPeriodos.filter(p => p !== periodo) })
+                              }
+                            }}
+                          />
+                          <span className="text-sm text-gray-700 dark:text-gray-300">{periodo}</span>
+                        </label>
+                      ))}
+                      {getPeriodos()
+                        .filter(periodo => 
+                          periodo.toLowerCase().includes(periodosSearch.toLowerCase())
+                        ).length === 0 && (
+                        <div className="text-sm text-gray-500 text-center py-2">
+                          No se encontraron períodos
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Geographical filters */}
+          <div ref={dropdownRef} className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 xl:grid-cols-5 gap-1.5 relative" data-dropdown="filters-container">
+            {/* Estado - Convertido a dropdown con opciones coloridas */}
+            <div className="relative">
+              <button
+                onClick={() => toggleDropdown('estado')}
+                className="flex items-center justify-between w-full px-2 py-3 bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-700 rounded-lg cursor-pointer hover:bg-teal-100 dark:hover:bg-teal-800/30 transition-colors duration-200"
+              >
+                <span className="text-xs font-medium text-teal-700 dark:text-teal-300 truncate">Estado</span>
+                <ChevronDown className={`w-3 h-3 text-teal-600 transition-transform duration-200 ml-1 flex-shrink-0 ${openDropdowns.estado ? 'rotate-180' : ''}`} />
+              </button>
+
+              {openDropdowns.estado && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-xl z-[9999] max-h-80 overflow-y-auto">
+                  <div className="p-3">
+                    <div className="space-y-1">
+                      {estadosOptions.map(option => (
+                        <button
+                          key={option.value}
+                          onClick={() => {
+                            updateFilters({ estado: option.value })
+                            setOpenDropdowns(prev => ({ ...prev, estado: false }))
+                          }}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors duration-200 ${
+                            safeFilters.estado === option.value 
+                              ? 'bg-teal-100 text-teal-800 dark:bg-teal-800 dark:text-teal-200' 
+                              : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Fuente de Financiamiento */}
+            <div className="relative">
+              <button
+                onClick={() => toggleDropdown('fuente_financiamiento')}
+                className="flex items-center justify-between w-full px-2 py-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded-lg cursor-pointer hover:bg-purple-100 dark:hover:bg-purple-800/30 transition-colors duration-200"
+              >
+                <div className="flex items-center space-x-1 min-w-0 flex-1">
+                  <span className="text-xs font-medium text-purple-700 dark:text-purple-300 truncate">Fuente de Financiamiento</span>
+                  {fuentesLoading && (
+                    <div className="w-3 h-3 border border-purple-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></div>
+                  )}
+                  {!fuentesLoading && fuentesFinanciamiento.length === 0 && (
+                    <span className="text-xs text-red-600 dark:text-red-400 flex-shrink-0">(Sin datos)</span>
+                  )}
+                </div>
+                <ChevronDown className={`w-3 h-3 text-purple-600 transition-transform duration-200 ml-1 flex-shrink-0 ${openDropdowns.fuente_financiamiento ? 'rotate-180' : ''}`} />
+              </button>
+
+              {openDropdowns.fuente_financiamiento && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-xl z-[9999] max-h-80 overflow-y-auto">
+                  <div className="p-3">
+                    <input
+                      type="text"
+                      value={fuenteFinanciamientoSearch}
+                      onChange={(e) => setFuenteFinanciamientoSearch(e.target.value)}
+                      placeholder="Buscar fuente..."
+                      className="w-full px-2 py-1 border border-gray-200 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white mb-2"
+                    />
+                    <div className="space-y-1 max-h-60 overflow-y-auto">
+                      {filteredFuentesFinanciamiento.map((fuente: string) => (
                         <label key={fuente} className="flex items-center space-x-2 p-1 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded cursor-pointer">
                           <input
                             type="checkbox"
-                            className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
                             checked={safeFilters.fuentesFinanciamiento?.includes(fuente) || false}
                             onChange={(e) => handleFuenteFinanciamientoChange(fuente, e.target.checked)}
+                            className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
                           />
                           <span className="text-sm text-gray-700 dark:text-gray-300">{fuente}</span>
                         </label>
                       ))}
                       {filteredFuentesFinanciamiento.length === 0 && (
                         <div className="text-sm text-gray-500 text-center py-2">
-                          No se encontraron fuentes
+                          {fuentesLoading ? 'Cargando...' : 'No se encontraron fuentes'}
                         </div>
                       )}
                     </div>
@@ -782,14 +1114,25 @@ export default function UnifiedFilters({
             <div className="relative">
               <button
                 onClick={() => toggleDropdown('comunas_barrios')}
-                className="flex items-center justify-between w-full p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-800/30 transition-colors duration-200"
+                className="flex items-center justify-between w-full px-2 py-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-800/30 transition-colors duration-200"
               >
-                <span className="text-xs font-medium text-blue-700 dark:text-blue-300">Comunas y Barrios</span>
-                <ChevronDown className={`w-3 h-3 text-blue-600 transition-transform duration-200 ${openDropdowns.comunas_barrios ? 'rotate-180' : ''}`} />
+                <div className="flex items-center space-x-1 min-w-0 flex-1">
+                  <span className="text-xs font-medium text-blue-700 dark:text-blue-300 truncate">Comunas y Barrios</span>
+                  {comunasLoading && (
+                    <div className="w-3 h-3 border border-blue-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></div>
+                  )}
+                  {!comunasLoading && comunasOptions.length === 0 && (
+                    <span className="text-xs text-red-600 dark:text-red-400 flex-shrink-0">(Sin datos)</span>
+                  )}
+                </div>
+                <ChevronDown className={`w-3 h-3 text-blue-600 transition-transform duration-200 ml-1 flex-shrink-0 ${openDropdowns.comunas_barrios ? 'rotate-180' : ''}`} />
               </button>
 
               {openDropdowns.comunas_barrios && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-xl z-[9999] max-h-80 overflow-y-auto">
+                <div 
+                  className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-xl z-[9999] max-h-80 overflow-y-auto"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <div className="p-3">
                     {/* Comunas list with search */}
                     <div className="mb-4">
@@ -801,33 +1144,40 @@ export default function UnifiedFilters({
                           onChange={(e) => setComunasSearch(e.target.value)}
                           placeholder="Buscar comuna..."
                           className="w-full px-2 py-1 border border-gray-200 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                          onClick={(e) => e.stopPropagation()}
                         />
                       </div>
                       <div className="space-y-1 max-h-32 overflow-y-auto">
                         {filteredComunas.map(comuna => (
-                          <label key={comuna} className="flex items-center space-x-2 p-1 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded cursor-pointer">
+                          <label 
+                            key={comuna} 
+                            className="flex items-center space-x-2 p-1 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded cursor-pointer"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             <input
                               type="checkbox"
                               className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                               checked={safeFilters.comunas?.includes(comuna) || false}
-                              onChange={(e) => handleComunaChange(comuna, e.target.checked)}
+                              onChange={(e) => {
+                                e.stopPropagation()
+                                handleComunaChange(comuna, e.target.checked)
+                              }}
                             />
                             <span className="text-sm text-gray-700 dark:text-gray-300">{comuna}</span>
                           </label>
                         ))}
+                        {filteredComunas.length === 0 && (
+                          <div className="text-sm text-gray-500 text-center py-2">
+                            {comunasLoading ? 'Cargando comunas...' : 'No se encontraron comunas'}
+                          </div>
+                        )}
                       </div>
                     </div>
 
                     {/* Barrios list with search */}
                     <div>
-                      <h4 className="text-sm font-semibold text-green-700 dark:text-green-300 mb-2 border-b border-green-200 dark:border-green-700 pb-1 flex items-center justify-between">
+                      <h4 className="text-sm font-semibold text-green-700 dark:text-green-300 mb-2 border-b border-green-200 dark:border-green-700 pb-1">
                         <span>Barrios</span>
-                        {(!safeFilters.comunas || safeFilters.comunas.length === 0) && (
-                          <span className="text-xs text-gray-500 italic">Selecciona primero una comuna</span>
-                        )}
-                        {(safeFilters.comunas && safeFilters.comunas.length > 0 && displayedBarrios.length === 0) && (
-                          <span className="text-xs text-orange-500 italic">No hay barrios disponibles</span>
-                        )}
                       </h4>
 
                       <div className="mb-2">
@@ -837,30 +1187,33 @@ export default function UnifiedFilters({
                           onChange={(e) => setBarriosSearch(e.target.value)}
                           placeholder="Buscar barrio..."
                           className="w-full px-2 py-1 border border-gray-200 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                          disabled={!safeFilters.comunas || safeFilters.comunas.length === 0}
+                          onClick={(e) => e.stopPropagation()}
                         />
                       </div>
 
-                      <div className={`space-y-1 max-h-32 overflow-y-auto ${(!safeFilters.comunas || safeFilters.comunas.length === 0) ? 'opacity-50' : ''}`}>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
                         {filteredBarrios.length > 0 ? (
                           filteredBarrios.map(barrio => (
-                            <label key={barrio} className="flex items-center space-x-2 p-1 hover:bg-green-50 dark:hover:bg-green-900/20 rounded cursor-pointer">
+                            <label 
+                              key={barrio} 
+                              className="flex items-center space-x-2 p-1 hover:bg-green-50 dark:hover:bg-green-900/20 rounded cursor-pointer"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <input
                                 type="checkbox"
                                 className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
                                 checked={safeFilters.barrios?.includes(barrio) || false}
-                                onChange={(e) => handleCheckboxChange('barrios', barrio, e.target.checked)}
-                                disabled={!safeFilters.comunas || safeFilters.comunas.length === 0}
+                                onChange={(e) => {
+                                  e.stopPropagation()
+                                  handleCheckboxChange('barrios', barrio, e.target.checked)
+                                }}
                               />
                               <span className="text-sm text-gray-700 dark:text-gray-300">{barrio}</span>
                             </label>
                           ))
                         ) : (
                           <div className="text-center py-2 text-gray-500 dark:text-gray-400 text-sm">
-                            {(!safeFilters.comunas || safeFilters.comunas.length === 0) 
-                              ? 'Selecciona una comuna para ver barrios'
-                              : 'No hay barrios disponibles para las comunas seleccionadas'
-                            }
+                            No hay barrios disponibles
                           </div>
                         )}
                       </div>
@@ -874,14 +1227,17 @@ export default function UnifiedFilters({
             <div className="relative">
               <button
                 onClick={() => toggleDropdown('corregimientos_veredas')}
-                className="flex items-center justify-between w-full p-2 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-700 rounded-lg cursor-pointer hover:bg-orange-100 dark:hover:bg-orange-800/30 transition-colors duration-200"
+                className="flex items-center justify-between w-full px-2 py-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-700 rounded-lg cursor-pointer hover:bg-orange-100 dark:hover:bg-orange-800/30 transition-colors duration-200"
               >
-                <span className="text-xs font-medium text-orange-700 dark:text-orange-300">Corregimientos y Veredas</span>
-                <ChevronDown className={`w-3 h-3 text-orange-600 transition-transform duration-200 ${openDropdowns.corregimientos_veredas ? 'rotate-180' : ''}`} />
+                <span className="text-xs font-medium text-orange-700 dark:text-orange-300 truncate">Corregimientos y Veredas</span>
+                <ChevronDown className={`w-3 h-3 text-orange-600 transition-transform duration-200 ml-1 flex-shrink-0 ${openDropdowns.corregimientos_veredas ? 'rotate-180' : ''}`} />
               </button>
 
               {openDropdowns.corregimientos_veredas && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-xl z-[9999] max-h-80 overflow-y-auto">
+                <div 
+                  className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-xl z-[9999] max-h-80 overflow-y-auto"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <div className="p-3">
                     <div className="mb-4">
                       <h4 className="text-sm font-semibold text-orange-700 dark:text-orange-300 mb-2 border-b border-orange-200 dark:border-orange-700 pb-1">Corregimientos</h4>
@@ -893,17 +1249,25 @@ export default function UnifiedFilters({
                           onChange={(e) => setCorregimientosSearch(e.target.value)}
                           placeholder="Buscar corregimiento..."
                           className="w-full px-2 py-1 border border-gray-200 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                          onClick={(e) => e.stopPropagation()}
                         />
                       </div>
 
                       <div className="space-y-1 max-h-32 overflow-y-auto">
                         {filteredCorregimientos.map(corregimiento => (
-                          <label key={corregimiento} className="flex items-center space-x-2 p-1 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded cursor-pointer">
+                          <label 
+                            key={corregimiento} 
+                            className="flex items-center space-x-2 p-1 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded cursor-pointer"
+                            onClick={(e) => e.stopPropagation()}
+                          >
                             <input
                               type="checkbox"
                               className="w-4 h-4 text-orange-600 border-gray-300 rounded focus:ring-orange-500"
                               checked={safeFilters.corregimientos?.includes(corregimiento) || false}
-                              onChange={(e) => handleCorregimientoChange(corregimiento, e.target.checked)}
+                              onChange={(e) => {
+                                e.stopPropagation()
+                                handleCorregimientoChange(corregimiento, e.target.checked)
+                              }}
                             />
                             <span className="text-sm text-gray-700 dark:text-gray-300">{corregimiento}</span>
                           </label>
@@ -930,18 +1294,26 @@ export default function UnifiedFilters({
                           placeholder="Buscar vereda..."
                           className="w-full px-2 py-1 border border-gray-200 dark:border-gray-600 rounded text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                           disabled={!safeFilters.corregimientos || safeFilters.corregimientos.length === 0}
+                          onClick={(e) => e.stopPropagation()}
                         />
                       </div>
 
                       <div className={`space-y-1 max-h-32 overflow-y-auto ${(!safeFilters.corregimientos || safeFilters.corregimientos.length === 0) ? 'opacity-50' : ''}`}>
                         {filteredVeredas.length > 0 ? (
                           filteredVeredas.map(vereda => (
-                            <label key={vereda} className="flex items-center space-x-2 p-1 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded cursor-pointer">
+                            <label 
+                              key={vereda} 
+                              className="flex items-center space-x-2 p-1 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded cursor-pointer"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               <input
                                 type="checkbox"
                                 className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
                                 checked={safeFilters.veredas?.includes(vereda) || false}
-                                onChange={(e) => handleCheckboxChange('veredas', vereda, e.target.checked)}
+                                onChange={(e) => {
+                                  e.stopPropagation()
+                                  handleCheckboxChange('veredas', vereda, e.target.checked)
+                                }}
                                 disabled={!safeFilters.corregimientos || safeFilters.corregimientos.length === 0}
                               />
                               <span className="text-sm text-gray-700 dark:text-gray-300">{vereda}</span>
@@ -966,10 +1338,10 @@ export default function UnifiedFilters({
             <div className="relative">
               <button
                 onClick={() => toggleDropdown('filtros_personalizados')}
-                className="flex items-center justify-between w-full p-2 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-lg cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-800/30 transition-colors duration-200"
+                className="flex items-center justify-between w-full px-2 py-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-lg cursor-pointer hover:bg-indigo-100 dark:hover:bg-indigo-800/30 transition-colors duration-200"
               >
-                <span className="text-xs font-medium text-indigo-700 dark:text-indigo-300">Filtros Personalizados</span>
-                <ChevronDown className={`w-3 h-3 text-indigo-600 transition-transform duration-200 ${openDropdowns.filtros_personalizados ? 'rotate-180' : ''}`} />
+                <span className="text-xs font-medium text-indigo-700 dark:text-indigo-300 truncate">Filtros Personalizados</span>
+                <ChevronDown className={`w-3 h-3 text-indigo-600 transition-transform duration-200 ml-1 flex-shrink-0 ${openDropdowns.filtros_personalizados ? 'rotate-180' : ''}`} />
               </button>
 
               {openDropdowns.filtros_personalizados && (
@@ -1086,25 +1458,15 @@ export default function UnifiedFilters({
                   </span>
                 ))}
 
-                {safeFilters.fechaInicio && (
-                  <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 text-sm rounded-full border border-green-200 dark:border-green-700">
+                {safeFilters.periodos?.map(periodo => (
+                  <span key={periodo} className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 text-sm rounded-full border border-green-200 dark:border-green-700">
                     <Calendar className="w-3 h-3" />
-                    Desde: {safeFilters.fechaInicio}
-                    <button onClick={() => removeFilter('fechaInicio')} className="hover:bg-green-200 dark:hover:bg-green-800 rounded-full p-1 transition-colors duration-200">
+                    {periodo}
+                    <button onClick={() => removeFilter('periodos', periodo)} className="hover:bg-green-200 dark:hover:bg-green-800 rounded-full p-1 transition-colors duration-200">
                       <X className="w-3 h-3" />
                     </button>
                   </span>
-                )}
-
-                {safeFilters.fechaFin && (
-                  <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 text-sm rounded-full border border-green-200 dark:border-green-700">
-                    <Calendar className="w-3 h-3" />
-                    Hasta: {safeFilters.fechaFin}
-                    <button onClick={() => removeFilter('fechaFin')} className="hover:bg-green-200 dark:hover:bg-green-800 rounded-full p-1 transition-colors duration-200">
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                )}
+                ))}
 
                 {safeFilters.comunas?.map(comuna => (
                   <span key={comuna} className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 text-sm rounded-full border border-blue-200 dark:border-blue-700">
