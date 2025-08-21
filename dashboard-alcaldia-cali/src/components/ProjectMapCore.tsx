@@ -14,7 +14,6 @@ export interface ProjectMapCoreProps {
   layerVisibility: {
     equipamientos: boolean
     infraestructura: boolean
-    unidadesProyecto: boolean
   }
   height: string
   theme: string
@@ -31,36 +30,25 @@ const ProjectMapCore: React.FC<ProjectMapCoreProps> = ({
   const layers: MapLayer[] = useMemo(() => {
     const mapLayers: MapLayer[] = []
 
-    // Capa de equipamientos
-    if (data.equipamientos) {
+    // Capa de equipamientos - solo mostrar unidades de proyecto como puntos
+    if (layerVisibility.equipamientos && data.unidadesProyecto && data.unidadesProyecto.length > 0) {
       mapLayers.push({
-        id: 'equipamientos',
+        id: 'equipamientos-puntos',
         name: 'Equipamientos',
-        data: data.equipamientos,
-        visible: layerVisibility.equipamientos,
-        type: 'geojson'
+        data: data.unidadesProyecto.filter(p => p.lat && p.lng),
+        visible: true,
+        type: 'points'
       })
     }
 
-    // Capa de infraestructura
-    if (data.infraestructura) {
+    // Capa de infraestructura/vías
+    if (data.infraestructura && layerVisibility.infraestructura) {
       mapLayers.push({
         id: 'infraestructura',
-        name: 'Infraestructura',
+        name: 'Vías',
         data: data.infraestructura,
-        visible: layerVisibility.infraestructura,
+        visible: true,
         type: 'geojson'
-      })
-    }
-
-    // Capa de unidades de proyecto como puntos
-    if (data.unidadesProyecto && data.unidadesProyecto.length > 0) {
-      mapLayers.push({
-        id: 'unidadesProyecto',
-        name: 'Unidades de Proyecto',
-        data: data.unidadesProyecto.filter(p => p.lat && p.lng),
-        visible: layerVisibility.unidadesProyecto,
-        type: 'points'
       })
     }
 
