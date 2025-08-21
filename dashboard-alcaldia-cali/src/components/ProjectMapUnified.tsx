@@ -100,15 +100,24 @@ const ProjectMapUnified: React.FC<ProjectMapProps> = ({
   const [showBaseMapSelector, setShowBaseMapSelector] = useState(false)
   const [isClient, setIsClient] = useState(false)
   
-  // Configuración de capas
+  // Configuración de capas - Ambas activadas por defecto
   const [layerVisibility, setLayerVisibility] = useState({
     equipamientos: true,
-    infraestructura: false
+    infraestructura: true
   })
 
   // Hooks
   const { theme } = useTheme()
-  const { unidadesProyecto } = useUnidadesProyecto()
+  const unidadesState = useUnidadesProyecto()
+  const unidadesProyecto = unidadesState.unidadesProyecto || []
+  const unidadesLoading = unidadesState.loading
+  const unidadesError = unidadesState.error
+
+  console.log('📊 Estado unidades proyecto:', {
+    total: unidadesProyecto.length,
+    loading: unidadesLoading,
+    error: unidadesError
+  })
 
   // Verificar si estamos en el cliente
   useEffect(() => {
@@ -116,8 +125,8 @@ const ProjectMapUnified: React.FC<ProjectMapProps> = ({
   }, [])
 
   /**
-   * Carga inicial de datos GeoJSON y unidades de proyecto
-   * Forzar carga inmediata para evitar problemas de primera carga
+   * Carga inicial de datos GeoJSON e infraestructura
+   * No depende de unidades de proyecto para evitar recargas
    */
   useEffect(() => {
     const loadMapData = async () => {
@@ -127,18 +136,22 @@ const ProjectMapUnified: React.FC<ProjectMapProps> = ({
         
         console.log('🗺️ === INICIANDO CARGA MAPA UNIDADES DE PROYECTO ===')
         
-        // Cargar datos geográficos en paralelo
-        const geoData = await loadMultipleGeoJSON(['equipamientos', 'infraestructura'], {
+        // Cargar datos geográficos en paralelo - solo infraestructura
+        const geoData = await loadMultipleGeoJSON(['infraestructura'], {
           processCoordinates: true,
           cache: true
         })
 
-        // Estructura de datos unificada - forzar datos aunque estén vacíos
+        // Estructura de datos unificada - solo infraestructura y unidades de proyecto
         const projectMapData: ProjectMapData = {
-          equipamientos: geoData.equipamientos || null,
+          equipamientos: null, // No cargar equipamientos GeoJSON para evitar duplicación
           infraestructura: geoData.infraestructura || null,
           unidadesProyecto: unidadesProyecto || []
         }
+
+        console.log('🗺️ Datos del mapa unificado:')
+        console.log('📊 Infraestructura features:', projectMapData.infraestructura?.features?.length || 0)
+        console.log('📊 Unidades de proyecto inicial:', projectMapData.unidadesProyecto?.length || 0)
 
         setMapData(projectMapData)
         console.log('✅ Datos del mapa de unidades cargados exitosamente')
@@ -160,13 +173,14 @@ const ProjectMapUnified: React.FC<ProjectMapProps> = ({
     if (isClient) {
       loadMapData()
     }
-  }, [isClient]) // Removido unidadesProyecto de dependencias para evitar recargas innecesarias
+  }, [isClient]) // Solo depende de isClient
 
   /**
-   * Actualizar unidades de proyecto cuando cambien (sin recargar todo)
+   * Actualizar unidades de proyecto cuando cambien
    */
   useEffect(() => {
-    if (mapData && unidadesProyecto) {
+    if (mapData && unidadesProyecto && unidadesProyecto.length > 0) {
+      console.log('🔄 Actualizando unidades de proyecto en mapa:', unidadesProyecto.length)
       setMapData(prev => prev ? { ...prev, unidadesProyecto } : null)
     }
   }, [unidadesProyecto])

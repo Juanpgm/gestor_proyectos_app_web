@@ -30,10 +30,10 @@ const ProjectMapCore: React.FC<ProjectMapCoreProps> = ({
   const layers: MapLayer[] = useMemo(() => {
     const mapLayers: MapLayer[] = []
 
-    // Capa de equipamientos - solo mostrar unidades de proyecto como puntos
+    // Capa de equipamientos como puntos (unidades de proyecto)
     if (layerVisibility.equipamientos && data.unidadesProyecto && data.unidadesProyecto.length > 0) {
       mapLayers.push({
-        id: 'equipamientos-puntos',
+        id: 'equipamientos',
         name: 'Equipamientos',
         data: data.unidadesProyecto.filter(p => p.lat && p.lng),
         visible: true,

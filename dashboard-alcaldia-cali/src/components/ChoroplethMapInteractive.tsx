@@ -36,15 +36,19 @@ const ChoroplethMapInteractive: React.FC<ChoroplethMapProps> = ({
     const loadGeoData = async () => {
       try {
         setLoading(true)
-        const geoJSONPaths = ['/geodata/comunas.geojson', '/geodata/barrios.geojson']
+        // Usar nombres de archivos en lugar de rutas completas
+        const fileNames = ['comunas', 'barrios']
         
-        const loadedData = await loadMultipleGeoJSON(geoJSONPaths)
+        const loadedData = await loadMultipleGeoJSON(fileNames)
         setGeoData({
-          comunas: loadedData['/geodata/comunas.geojson'],
-          barrios: loadedData['/geodata/barrios.geojson']
+          comunas: loadedData.comunas,
+          barrios: loadedData.barrios
         })
+        console.log('✅ Datos GeoJSON cargados exitosamente en ChoroplethMap')
+        console.log('📊 Comunas features:', loadedData.comunas?.features?.length || 0)
+        console.log('📊 Barrios features:', loadedData.barrios?.features?.length || 0)
       } catch (error) {
-        console.error('Error cargando datos GeoJSON:', error)
+        console.error('❌ Error cargando datos GeoJSON:', error)
       } finally {
         setLoading(false)
       }

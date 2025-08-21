@@ -171,12 +171,12 @@ const MapControls: React.FC<{
     controlsContainer.className = 'universal-map-controls'
     controlsContainer.style.cssText = `
       position: absolute;
-      top: 10px;
-      right: 10px;
+      top: 15px;
+      right: 15px;
       z-index: 1000;
       display: flex;
       flex-direction: column;
-      gap: 5px;
+      gap: 12px;
     `
     
     map.getContainer().appendChild(controlsContainer)
@@ -185,23 +185,39 @@ const MapControls: React.FC<{
     if (enableFullscreen) {
       const fullscreenBtn = document.createElement('button')
       fullscreenBtn.className = 'map-control-btn'
-      fullscreenBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>'
+      fullscreenBtn.innerHTML = `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+        </svg>
+      `
       fullscreenBtn.title = 'Pantalla completa'
       fullscreenBtn.style.cssText = `
-        width: 30px;
-        height: 30px;
-        background: white;
-        border: 1px solid #ccc;
-        border-radius: 4px;
+        width: 40px;
+        height: 40px;
+        background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+        border: 2px solid #e2e8f0;
+        border-radius: 8px;
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        transition: background-color 0.2s;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        color: #475569;
+        font-weight: 600;
       `
-      fullscreenBtn.onmouseover = () => fullscreenBtn.style.backgroundColor = '#f5f5f5'
-      fullscreenBtn.onmouseout = () => fullscreenBtn.style.backgroundColor = 'white'
+      fullscreenBtn.onmouseover = () => {
+        fullscreenBtn.style.background = 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)'
+        fullscreenBtn.style.color = '#ffffff'
+        fullscreenBtn.style.transform = 'scale(1.05)'
+        fullscreenBtn.style.boxShadow = '0 6px 20px rgba(59, 130, 246, 0.4)'
+      }
+      fullscreenBtn.onmouseout = () => {
+        fullscreenBtn.style.background = 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)'
+        fullscreenBtn.style.color = '#475569'
+        fullscreenBtn.style.transform = 'scale(1)'
+        fullscreenBtn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)'
+      }
       fullscreenBtn.onclick = onFullscreen
       controlsContainer.appendChild(fullscreenBtn)
     }
@@ -210,23 +226,40 @@ const MapControls: React.FC<{
     if (enableCenterView) {
       const centerBtn = document.createElement('button')
       centerBtn.className = 'map-control-btn'
-      centerBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg>'
+      centerBtn.innerHTML = `
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 1v6m0 14v6m11-7h-6m-14 0h6"/>
+        </svg>
+      `
       centerBtn.title = 'Centrar vista en capas visibles'
       centerBtn.style.cssText = `
-        width: 30px;
-        height: 30px;
-        background: white;
-        border: 1px solid #ccc;
-        border-radius: 4px;
+        width: 40px;
+        height: 40px;
+        background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+        border: 2px solid #e2e8f0;
+        border-radius: 8px;
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        transition: background-color 0.2s;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        color: #475569;
+        font-weight: 600;
       `
-      centerBtn.onmouseover = () => centerBtn.style.backgroundColor = '#f5f5f5'
-      centerBtn.onmouseout = () => centerBtn.style.backgroundColor = 'white'
+      centerBtn.onmouseover = () => {
+        centerBtn.style.background = 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+        centerBtn.style.color = '#ffffff'
+        centerBtn.style.transform = 'scale(1.05)'
+        centerBtn.style.boxShadow = '0 6px 20px rgba(16, 185, 129, 0.4)'
+      }
+      centerBtn.onmouseout = () => {
+        centerBtn.style.background = 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)'
+        centerBtn.style.color = '#475569'
+        centerBtn.style.transform = 'scale(1)'
+        centerBtn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)'
+      }
       centerBtn.onclick = centerOnVisibleLayers
       controlsContainer.appendChild(centerBtn)
     }
@@ -468,25 +501,40 @@ const UniversalMapCore: React.FC<UniversalMapCoreProps> = ({
     if (!container) return
     
     if (!isFullscreen) {
-      // Entrar en pantalla completa
-      if (container.requestFullscreen) {
-        container.requestFullscreen()
-      } else if ((container as any).webkitRequestFullscreen) {
-        (container as any).webkitRequestFullscreen()
-      } else if ((container as any).msRequestFullscreen) {
-        (container as any).msRequestFullscreen()
+      // Entrar en pantalla completa - con manejo de errores
+      try {
+        if (container.requestFullscreen) {
+          container.requestFullscreen().catch(err => {
+            console.warn('No se pudo activar pantalla completa:', err)
+          })
+        } else if ((container as any).webkitRequestFullscreen) {
+          (container as any).webkitRequestFullscreen()
+        } else if ((container as any).msRequestFullscreen) {
+          (container as any).msRequestFullscreen()
+        } else {
+          console.warn('Pantalla completa no soportada en este navegador')
+        }
+        setIsFullscreen(true)
+      } catch (error) {
+        console.warn('Error al activar pantalla completa:', error)
       }
-      setIsFullscreen(true)
     } else {
       // Salir de pantalla completa
-      if (document.exitFullscreen) {
-        document.exitFullscreen()
-      } else if ((document as any).webkitExitFullscreen) {
-        (document as any).webkitExitFullscreen()
-      } else if ((document as any).msExitFullscreen) {
-        (document as any).msExitFullscreen()
+      try {
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch(err => {
+            console.warn('Error al salir de pantalla completa:', err)
+          })
+        } else if ((document as any).webkitExitFullscreen) {
+          (document as any).webkitExitFullscreen()
+        } else if ((document as any).msExitFullscreen) {
+          (document as any).msExitFullscreen()
+        }
+        setIsFullscreen(false)
+      } catch (error) {
+        console.warn('Error al salir de pantalla completa:', error)
+        setIsFullscreen(false)
       }
-      setIsFullscreen(false)
     }
     
     // Invalidar tamaño del mapa después de un breve delay
