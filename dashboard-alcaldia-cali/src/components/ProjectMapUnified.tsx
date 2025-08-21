@@ -109,7 +109,12 @@ const ProjectMapUnified: React.FC<ProjectMapProps> = ({
   // Hooks
   const { theme } = useTheme()
   const unidadesState = useUnidadesProyecto()
-  const unidadesProyecto = unidadesState.unidadesProyecto || []
+  
+  // Memoizar unidades de proyecto para evitar re-renders innecesarios
+  const unidadesProyecto = useMemo(() => {
+    return unidadesState.unidadesProyecto || []
+  }, [unidadesState.unidadesProyecto])
+  
   const unidadesLoading = unidadesState.loading
   const unidadesError = unidadesState.error
 
@@ -142,16 +147,16 @@ const ProjectMapUnified: React.FC<ProjectMapProps> = ({
           cache: true
         })
 
-        // Estructura de datos unificada - solo infraestructura y unidades de proyecto
+        // Estructura de datos unificada - solo infraestructura inicialmente
         const projectMapData: ProjectMapData = {
           equipamientos: null, // No cargar equipamientos GeoJSON para evitar duplicación
           infraestructura: geoData.infraestructura || null,
-          unidadesProyecto: unidadesProyecto || []
+          unidadesProyecto: [] // Se actualizará en el useEffect separado
         }
 
         console.log('🗺️ Datos del mapa unificado:')
         console.log('📊 Infraestructura features:', projectMapData.infraestructura?.features?.length || 0)
-        console.log('📊 Unidades de proyecto inicial:', projectMapData.unidadesProyecto?.length || 0)
+        console.log('📊 Unidades de proyecto:', 'Se cargarán en useEffect separado')
 
         setMapData(projectMapData)
         console.log('✅ Datos del mapa de unidades cargados exitosamente')
@@ -183,7 +188,7 @@ const ProjectMapUnified: React.FC<ProjectMapProps> = ({
       console.log('🔄 Actualizando unidades de proyecto en mapa:', unidadesProyecto.length)
       setMapData(prev => prev ? { ...prev, unidadesProyecto } : null)
     }
-  }, [unidadesProyecto])
+  }, [unidadesProyecto, mapData])
 
   /**
    * Alternar visibilidad de capas
